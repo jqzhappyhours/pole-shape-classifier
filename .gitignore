@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.py[cod]
+.DS_Store
+.venv/
+venv/
+
+# Local data (videos, images, CSV manifests from collectors) — not committed
+/data/*
+!/data/README.md
