@@ -111,6 +111,13 @@ def video_folder(shape: str):
 def output_folder(shape: str):
     return os.path.join(DATA_ROOT, "images", shape)
 
+
+'''
+Extract frames from the videos in the inside_leg_hang and outside_leg_hang folders and
+save them to the images/inside_leg_hang and images/outside_leg_hang folders. The frames
+are resized to 224x224.
+'''
+
 if __name__ == "__main__":
     shapes = ["inside_leg_hang", "outside_leg_hang"]
     for shape in shapes:
