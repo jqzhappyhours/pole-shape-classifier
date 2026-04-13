@@ -16,4 +16,4 @@ for s in shape:
         raise ValueError(f"No video files found in: {video_dir}")
 
     for video in os.listdir(video_dir):
-        extract_frames_from_video(s, os.path.join(video_dir, video), os.path.join(DATA_ROOT, s),resize=(224, 224))
+        extract_frames_from_video(s, os.path.join(video_dir, video), os.path.join(DATA_ROOT, "images",s),resize=(224, 224))
