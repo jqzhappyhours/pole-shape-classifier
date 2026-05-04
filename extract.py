@@ -39,7 +39,7 @@ def extract_frames_from_video(
     shape: str,
     video_path: str,
     output_dir: str,
-    frame_interval: int = 60,
+    frame_interval: int = 200,
     resize: tuple = None
 ):
     """
@@ -54,7 +54,7 @@ def extract_frames_from_video(
     output_dir : str
         Directory to save extracted frames.
     frame_interval : int
-        Save every Nth frame (default=15).
+        Save every Nth frame (default=200).
     resize : tuple
         Optional output size (width, height). If provided, frames will be
         center-cropped to the target aspect ratio and then resized.
@@ -96,7 +96,7 @@ def extract_frames_from_video(
             cv2.imwrite(frame_filename, frame)
             saved_count += 1
 
-    frame_count += 1
+        frame_count += 1
 
     cap.release()
 
@@ -136,4 +136,5 @@ if __name__ == "__main__":
 
         for video_file in video_files:
             video_path = os.path.join(video_dir, video_file)
-            extract_frames_from_video(shape, video_path, out_dir, resize=(224, 224))
+            extract_frames_from_video(shape, video_path, out_dir, 
+            frame_interval = 500, resize=(224, 224))
