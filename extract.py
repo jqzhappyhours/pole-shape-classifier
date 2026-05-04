@@ -39,7 +39,7 @@ def extract_frames_from_video(
     shape: str,
     video_path: str,
     output_dir: str,
-    frame_interval: int = 15,
+    frame_interval: int = 60,
     resize: tuple = None
 ):
     """
