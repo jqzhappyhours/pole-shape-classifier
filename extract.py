@@ -35,12 +35,26 @@ def center_crop(frame, target_size: tuple):
         return frame[y1:y2, :]
 
 
+def _has_extracted_frames(output_dir: str, video_name: str, shape: str) -> bool:
+    """True if any frame files for this video+shape already exist in output_dir."""
+    prefix = f"{video_name}_{shape}_frame_"
+    try:
+        names = os.listdir(output_dir)
+    except FileNotFoundError:
+        return False
+    return any(
+        n.startswith(prefix) and n.lower().endswith((".jpg", ".jpeg", ".png"))
+        for n in names
+    )
+
+
 def extract_frames_from_video(
     shape: str,
     video_path: str,
     output_dir: str,
     frame_interval: int = 200,
-    resize: tuple = None
+    resize: tuple = None,
+    skip_existing: bool = True,
 ):
     """
     Extract frames from a video file at a fixed interval.
@@ -58,6 +72,9 @@ def extract_frames_from_video(
     resize : tuple
         Optional output size (width, height). If provided, frames will be
         center-cropped to the target aspect ratio and then resized.
+    skip_existing : bool
+        If True, do not extract when frames for this video already exist in
+        output_dir (same naming pattern as this function uses).
 
     Returns:
     --------
@@ -68,6 +85,11 @@ def extract_frames_from_video(
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
 
+    video_name = os.path.splitext(os.path.basename(video_path))[0]
+    if skip_existing and _has_extracted_frames(output_dir, video_name, shape):
+        print(f"Skipping (already extracted): {video_path}")
+        return 0
+
     cap = cv2.VideoCapture(video_path)
 
     if not cap.isOpened():
@@ -75,7 +97,6 @@ def extract_frames_from_video(
 
     frame_count = 0
     saved_count = 0
-    video_name = os.path.splitext(os.path.basename(video_path))[0]
 
     while True:
         ret, frame = cap.read()
@@ -137,4 +158,4 @@ if __name__ == "__main__":
         for video_file in video_files:
             video_path = os.path.join(video_dir, video_file)
             extract_frames_from_video(shape, video_path, out_dir, 
-            frame_interval = 500, resize=(224, 224))
+            frame_interval = 30, resize=(224, 224))
