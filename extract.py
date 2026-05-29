@@ -140,7 +140,7 @@ are resized to 224x224.
 '''
 
 if __name__ == "__main__":
-    shapes = ["inside_leg_hang", "outside_leg_hang"]
+    shapes = ["inside_leg_hang", "outside_leg_hang", "flare", "airwalk", "invert", "climb", "pencil", "unknown"]
     for shape in shapes:
         video_dir = video_folder(shape)
         out_dir = output_folder(shape)
@@ -158,4 +158,4 @@ if __name__ == "__main__":
         for video_file in video_files:
             video_path = os.path.join(video_dir, video_file)
             extract_frames_from_video(shape, video_path, out_dir, 
-            frame_interval = 30, resize=(224, 224))
+            frame_interval = 5, resize=(224, 224))
