@@ -5,7 +5,7 @@ import tempfile
 
 import streamlit as st
 
-from pole_infer import VideoInferenceConfig, load_model, predict_video
+from pole_infer import VideoInferenceConfig, load_model, predict_video, predict_video_sequence
 
 
 st.set_page_config(page_title="Pole shape classifier", page_icon="🎥", layout="centered")
@@ -54,13 +54,25 @@ try:
 
     with st.spinner("Running inference…"):
         result = predict_video(model, tmp_path, config=config)
+        segments = predict_video_sequence(model, tmp_path, config=config)
 
-    st.subheader("Prediction")
+    st.subheader("Overall prediction")
     st.metric("Pole shape", result["pred_name"])
     st.write(f"Confidence: **{result['confidence']:.3f}**")
     st.caption(
         f"Analyzed {result['n_frames']} frames • interval={result['frame_interval']} • max_frames={result['max_frames']}"
     )
+
+    st.subheader("Shape sequence")
+    for seg in segments:
+        start = seg["start"]
+        end = seg["end"]
+        label = seg["label"]
+        conf = seg["confidence"]
+        duration = end - start
+        st.markdown(
+            f"**{label}** &nbsp; `{start:.1f}s – {end:.1f}s` &nbsp; ({duration:.1f}s) &nbsp; conf: {conf:.2f}"
+        )
 
     with st.expander("Debug (mean probabilities)"):
         st.json(result)

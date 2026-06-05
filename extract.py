@@ -140,7 +140,7 @@ are resized to 224x224.
 '''
 
 if __name__ == "__main__":
-    shapes = ["inside_leg_hang", "outside_leg_hang", "flare", "airwalk", "invert", "climb", "pencil", "unknown"]
+    shapes = ["inside_leg_hang", "outside_leg_hang", "airwalk", "invert", "climb", "pencil", "unknown"]
     for shape in shapes:
         video_dir = video_folder(shape)
         out_dir = output_folder(shape)

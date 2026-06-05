@@ -11,8 +11,13 @@ import tensorflow as tf
 from extract import center_crop
 
 
-DEFAULT_CLASS_NAMES = ["inside_leg_hang", "outside_leg_hang"]
-
+DEFAULT_CLASS_NAMES = ['airwalk',
+ 'climb',
+ 'inside_leg_hang',
+ 'invert',
+ 'outside_leg_hang',
+ 'pencil',
+ 'unknown']
 
 @dataclass(frozen=True)
 class VideoInferenceConfig:
@@ -84,6 +89,60 @@ def iter_video_frames(
         cap.release()
 
 
+def predict_video_sequence(
+    model: tf.keras.Model,
+    video_path: str,
+    *,
+    class_names: Optional[list[str]] = None,
+    config: VideoInferenceConfig = VideoInferenceConfig(),
+) -> list[dict]:
+    """Return deduplicated shape segments: [{start, end, label, confidence}, ...]"""
+    class_names = class_names or DEFAULT_CLASS_NAMES
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise ValueError(f"Cannot open video file: {video_path}")
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    cap.release()
+
+    frames = list(
+        iter_video_frames(
+            video_path,
+            image_size=config.image_size,
+            frame_interval=config.frame_interval,
+            max_frames=config.max_frames,
+        )
+    )
+    if not frames:
+        raise ValueError("No frames were extracted from the video.")
+
+    x = np.stack(frames, axis=0)
+    probs = model.predict(x, verbose=0)  # (N, num_classes)
+
+    pred_indices = np.argmax(probs, axis=1)
+    confidences = probs[np.arange(len(probs)), pred_indices]
+    seconds_per_sample = config.frame_interval / fps
+
+    segments: list[dict] = []
+    for i, (pred_idx, conf) in enumerate(zip(pred_indices, confidences)):
+        label = class_names[int(pred_idx)] if int(pred_idx) < len(class_names) else str(pred_idx)
+        t_start = i * seconds_per_sample
+        t_end = (i + 1) * seconds_per_sample
+
+        if segments and segments[-1]["label"] == label:
+            seg = segments[-1]
+            seg["end"] = t_end
+            seg["_n"] += 1
+            seg["confidence"] += (float(conf) - seg["confidence"]) / seg["_n"]
+        else:
+            segments.append({"start": t_start, "end": t_end, "label": label, "confidence": float(conf), "_n": 1})
+
+    for seg in segments:
+        seg.pop("_n")
+
+    return segments
+
+
 def predict_video(
     model: tf.keras.Model,
     video_path: str,
@@ -122,4 +181,15 @@ def predict_video(
         "frame_interval": int(config.frame_interval),
         "max_frames": int(config.max_frames),
     }
+
+
+def predict_class(
+    model: tf.keras.Model,
+    video_path: str,
+    *,
+    class_names: Optional[list[str]] = None,
+    config: VideoInferenceConfig = VideoInferenceConfig(),
+) -> str:
+    result = predict_video(model, video_path, class_names=class_names, config=config)
+    return result["pred_name"]
 
