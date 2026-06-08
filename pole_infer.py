@@ -183,6 +183,55 @@ def predict_video(
     }
 
 
+def annotate_video(
+    video_path: str,
+    segments: list[dict],
+    output_path: str,
+) -> str:
+    """Write a copy of the video with the predicted shape label overlaid on each frame."""
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise ValueError(f"Cannot open video file: {video_path}")
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    fourcc = cv2.VideoWriter_fourcc(*"avc1")
+    out = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
+
+    frame_idx = 0
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        t = frame_idx / fps
+        label = ""
+        confidence = 0.0
+        for seg in segments:
+            if seg["start"] <= t < seg["end"]:
+                label = seg["label"]
+                confidence = seg["confidence"]
+                break
+
+        if label:
+            text = f"{label}  {confidence:.2f}"
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            scale = max(0.6, w / 1000)
+            thickness = max(1, int(scale * 2))
+            (tw, th), _ = cv2.getTextSize(text, font, scale, thickness)
+            cv2.rectangle(frame, (10, 10), (20 + tw, 20 + th + 8), (0, 0, 0), -1)
+            cv2.putText(frame, text, (15, 15 + th), font, scale, (0, 255, 0), thickness)
+
+        out.write(frame)
+        frame_idx += 1
+
+    cap.release()
+    out.release()
+    return output_path
+
+
 def predict_class(
     model: tf.keras.Model,
     video_path: str,

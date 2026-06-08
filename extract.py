@@ -134,15 +134,25 @@ def output_folder(shape: str):
     return os.path.join(DATA_ROOT, "images", shape)
 
 
-def extract_split(shape: str, train_ratio: float = 0.8, seed: int = 42, frame_interval: int = 5):
+def extract_split(
+    shape: str,
+    train_ratio: float = 0.7,
+    val_ratio: float = 0.15,
+    seed: int = 42,
+    frame_interval: int = 5,
+):
     """
     Extract frames from all videos for a shape, splitting at the video level
-    into train/val to prevent data leakage.
+    into train/val/test to prevent data leakage.
 
     Frames are saved to:
         data/images/train/<shape>/
         data/images/val/<shape>/
+        data/images/test/<shape>/
     """
+    if train_ratio + val_ratio >= 1.0:
+        raise ValueError("train_ratio + val_ratio must be less than 1.0")
+
     video_dir = video_folder(shape)
     videos = sorted(
         f for f in os.listdir(video_dir)
@@ -154,10 +164,18 @@ def extract_split(shape: str, train_ratio: float = 0.8, seed: int = 42, frame_in
     random.seed(seed)
     shuffled = videos[:]
     random.shuffle(shuffled)
-    split = max(1, int(len(shuffled) * train_ratio))
+
+    n = len(shuffled)
+    n_train = max(1, int(n * train_ratio))
+    n_val = max(1, int(n * val_ratio))
 
     for i, video_file in enumerate(shuffled):
-        split_name = "train" if i < split else "val"
+        if i < n_train:
+            split_name = "train"
+        elif i < n_train + n_val:
+            split_name = "val"
+        else:
+            split_name = "test"
         out_dir = os.path.join(DATA_ROOT, "images", split_name, shape)
         extract_frames_from_video(
             shape,
@@ -179,4 +197,4 @@ if __name__ == "__main__":
     for shape in shapes:
         if not os.path.isdir(video_folder(shape)):
             raise ValueError(f"Video directory does not exist: {video_folder(shape)}")
-        extract_split(shape, train_ratio=0.8, frame_interval=5)
+        extract_split(shape, train_ratio=0.7, val_ratio=0.15, frame_interval=2)

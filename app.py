@@ -5,7 +5,7 @@ import tempfile
 
 import streamlit as st
 
-from pole_infer import VideoInferenceConfig, load_model, predict_video, predict_video_sequence
+from pole_infer import VideoInferenceConfig, annotate_video, load_model, predict_video, predict_video_sequence
 
 
 st.set_page_config(page_title="Pole shape classifier", page_icon="🎥", layout="centered")
@@ -48,6 +48,9 @@ with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as f:
     f.write(uploaded.getbuffer())
     tmp_path = f.name
 
+with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as f:
+    annotated_path = f.name
+
 try:
     with st.spinner("Loading model…"):
         model = _get_model(model_path)
@@ -55,6 +58,13 @@ try:
     with st.spinner("Running inference…"):
         result = predict_video(model, tmp_path, config=config)
         segments = predict_video_sequence(model, tmp_path, config=config)
+
+    with st.spinner("Annotating video…"):
+        annotate_video(tmp_path, segments, annotated_path)
+
+    st.subheader("Annotated video")
+    with open(annotated_path, "rb") as f:
+        st.video(f.read())
 
     st.subheader("Overall prediction")
     st.metric("Pole shape", result["pred_name"])
@@ -77,8 +87,9 @@ try:
     with st.expander("Debug (mean probabilities)"):
         st.json(result)
 finally:
-    try:
-        os.remove(tmp_path)
-    except OSError:
-        pass
+    for path in (tmp_path, annotated_path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
