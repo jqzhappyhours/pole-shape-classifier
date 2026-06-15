@@ -4,3 +4,5 @@ opencv-python
 numpy
 matplotlib
 scikit-learn
+yt-dlp
+mediapipe
