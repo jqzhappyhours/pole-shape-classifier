@@ -8,9 +8,6 @@ import cv2
 import numpy as np
 import tensorflow as tf
 
-from extract import center_crop
-from pose_utils import detect_and_draw, extract_landmarks, make_landmarker
-
 
 DEFAULT_CLASS_NAMES = ['airwalk',
  'climb',
@@ -20,6 +17,9 @@ DEFAULT_CLASS_NAMES = ['airwalk',
  'pencil',
  'unknown']
 
+# Class names for the MLP model trained on pose landmarks (no 'unknown' class)
+MLP_CLASS_NAMES = ['airwalk', 'climb', 'inside_leg_hang', 'invert', 'outside_leg_hang', 'pencil']
+
 @dataclass(frozen=True)
 class VideoInferenceConfig:
     image_size: tuple[int, int] = (224, 224)  # (width, height)
@@ -27,6 +27,7 @@ class VideoInferenceConfig:
     max_frames: int = 64
     smooth_window: int = 5  # majority-vote window size for sequence smoothing
     use_pose_skeleton: bool = False  # must match training preprocessing
+    confidence_threshold: float = 0.6  # predictions below this are labelled "unknown"
 
 
 def _smooth_predictions(pred_indices: np.ndarray, window: int) -> np.ndarray:
@@ -68,6 +69,40 @@ def load_model(model_path: Optional[str] = None) -> tf.keras.Model:
     return tf.keras.models.load_model(path)
 
 
+def _resolve_mlp_path(explicit_path: Optional[str] = None) -> Path:
+    if explicit_path:
+        p = Path(explicit_path).expanduser()
+        if not p.is_file():
+            raise FileNotFoundError(f"Model file not found: {p}")
+        return p
+    p = Path("pose_mlp.keras")
+    if p.is_file():
+        return p
+    raise FileNotFoundError(
+        "MLP model not found. Train it in model.ipynb and save as `pose_mlp.keras`."
+    )
+
+
+def load_mlp_model(model_path: Optional[str] = None) -> tf.keras.Model:
+    path = _resolve_mlp_path(model_path)
+    return tf.keras.models.load_model(path)
+
+
+def _center_crop(frame: np.ndarray, target_size: tuple) -> np.ndarray:
+    target_w, target_h = target_size
+    h, w = frame.shape[:2]
+    target_ratio = target_w / target_h
+    current_ratio = w / h if h else 0
+    if current_ratio > target_ratio:
+        new_w = int(round(h * target_ratio))
+        x1 = max((w - new_w) // 2, 0)
+        return frame[:, x1:x1 + new_w]
+    else:
+        new_h = int(round(w / target_ratio)) if target_ratio != 0 else h
+        y1 = max((h - new_h) // 2, 0)
+        return frame[y1:y1 + new_h, :]
+
+
 def iter_video_frames(
     video_path: str,
     *,
@@ -83,6 +118,9 @@ def iter_video_frames(
     - Training used `keras.utils.image_dataset_from_directory(image_size=(224,224))`
       without explicit rescaling/preprocessing, so we keep pixel values in [0,255].
     """
+    if use_pose_skeleton:
+        from pose_utils import detect_and_draw, make_landmarker  # noqa: PLC0415
+
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise ValueError(f"Cannot open video file: {video_path}")
@@ -98,7 +136,7 @@ def iter_video_frames(
                 break
 
             if frame_idx % frame_interval == 0:
-                frame_bgr = center_crop(frame_bgr, (target_w, target_h))
+                frame_bgr = _center_crop(frame_bgr, (target_w, target_h))
                 frame_bgr = cv2.resize(frame_bgr, (target_w, target_h))
 
                 if use_pose_skeleton:
@@ -292,6 +330,8 @@ def iter_video_coords(
     max_frames: int,
 ) -> Iterable[np.ndarray]:
     """Yield normalized landmark vectors (99,) for each frame with a detected pose."""
+    from pose_utils import extract_landmarks, make_landmarker  # noqa: PLC0415
+
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise ValueError(f"Cannot open video file: {video_path}")
@@ -324,10 +364,9 @@ def predict_video_coords(
 ) -> dict:
     """Predict shape from pose coordinates extracted from a video.
 
-    Use this with a model trained on coordinate features (e.g. coord_mlp_v1.keras)
-    instead of the image-based predict_video().
+    Use this with the MLP model (pose_mlp.keras) trained on landmark features.
     """
-    class_names = class_names or DEFAULT_CLASS_NAMES
+    class_names = class_names or MLP_CLASS_NAMES
 
     coords_list = list(
         iter_video_coords(
@@ -344,15 +383,85 @@ def predict_video_coords(
     mean_probs = probs.mean(axis=0)
 
     pred_idx = int(np.argmax(mean_probs))
-    pred_name = class_names[pred_idx] if pred_idx < len(class_names) else str(pred_idx)
+    confidence = float(mean_probs[pred_idx])
+
+    if confidence < config.confidence_threshold:
+        pred_name = "unknown"
+    else:
+        pred_name = class_names[pred_idx] if pred_idx < len(class_names) else str(pred_idx)
 
     return {
         "pred_idx": pred_idx,
         "pred_name": pred_name,
-        "confidence": float(mean_probs[pred_idx]),
+        "confidence": confidence,
         "mean_probs": mean_probs.tolist(),
         "n_frames": int(x.shape[0]),
         "frame_interval": int(config.frame_interval),
         "max_frames": int(config.max_frames),
     }
+
+
+def predict_video_sequence_coords(
+    model: tf.keras.Model,
+    video_path: str,
+    *,
+    class_names: Optional[list[str]] = None,
+    config: VideoInferenceConfig = VideoInferenceConfig(),
+) -> list[dict]:
+    """Return deduplicated shape segments using the MLP landmark model.
+
+    Mirrors predict_video_sequence() but uses pose coordinates instead of images,
+    so it works with pose_mlp.keras rather than the EfficientNet models.
+    Returns [{start, end, label, confidence}, ...] same as predict_video_sequence().
+    """
+    class_names = class_names or MLP_CLASS_NAMES
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise ValueError(f"Cannot open video file: {video_path}")
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    cap.release()
+
+    coords_list = list(
+        iter_video_coords(
+            video_path,
+            frame_interval=config.frame_interval,
+            max_frames=config.max_frames,
+        )
+    )
+    if not coords_list:
+        raise ValueError("No frames with a detected pose were found in the video.")
+
+    x = np.stack(coords_list, axis=0)        # (N, 99)
+    probs = model.predict(x, verbose=0)       # (N, num_classes)
+
+    pred_indices = np.argmax(probs, axis=1)
+    pred_indices = _smooth_predictions(pred_indices, config.smooth_window)
+    confidences = probs[np.arange(len(probs)), pred_indices]
+    seconds_per_sample = config.frame_interval / fps
+
+    segments: list[dict] = []
+    for i, (pred_idx, conf) in enumerate(zip(pred_indices, confidences)):
+        if float(conf) < config.confidence_threshold:
+            label = "unknown"
+        else:
+            label = class_names[int(pred_idx)] if int(pred_idx) < len(class_names) else str(pred_idx)
+        t_start = i * seconds_per_sample
+        t_end = (i + 1) * seconds_per_sample
+
+        if segments and segments[-1]["label"] == label:
+            seg = segments[-1]
+            seg["end"] = t_end
+            seg["_n"] += 1
+            seg["confidence"] += (float(conf) - seg["confidence"]) / seg["_n"]
+        else:
+            segments.append({"start": t_start, "end": t_end, "label": label, "confidence": float(conf), "_n": 1})
+
+    min_duration = config.frame_interval / fps
+    segments = [s for s in segments if (s["end"] - s["start"]) >= min_duration * 2]
+
+    for seg in segments:
+        seg.pop("_n")
+
+    return segments
 

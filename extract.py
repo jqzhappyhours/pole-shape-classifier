@@ -3,7 +3,7 @@ import cv2
 import os
 import random
 
-from pose_utils import detect_and_draw, extract_landmarks, make_landmarker
+from pose_utils import extract_landmarks, make_landmarker
 
 COORD_COLUMNS = [f"lm_{i}_{ax}" for i in range(33) for ax in ("x", "y", "vis")]
 
@@ -293,7 +293,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    shapes = ["inside_leg_hang", "outside_leg_hang", "airwalk", "invert", "climb", "pencil", "unknown"]
+    shapes = ["inside_leg_hang", "outside_leg_hang", "airwalk", "invert", "climb", "pencil"]
 
     if args.coords:
         # Clear previous coordinate data so CSVs are not appended to old runs
@@ -304,7 +304,7 @@ if __name__ == "__main__":
             if not os.path.isdir(video_folder(shape)):
                 raise ValueError(f"Video directory does not exist: {video_folder(shape)}")
             print(f"\n=== {shape} ===")
-            extract_coords_split(shape, train_ratio=0.7, val_ratio=0.15, frame_interval=10)
+            extract_coords_split(shape, train_ratio=0.7, val_ratio=0.15, frame_interval=5)
     else:
         for shape in shapes:
             if not os.path.isdir(video_folder(shape)):

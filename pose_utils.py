@@ -18,26 +18,6 @@ MODEL_URL = (
     "pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task"
 )
 
-# Standard MediaPipe pose landmark connections (index pairs)
-POSE_CONNECTIONS = [
-    # Face
-    (0, 1), (1, 2), (2, 3), (3, 7),
-    (0, 4), (4, 5), (5, 6), (6, 8),
-    (9, 10),
-    # Shoulders
-    (11, 12),
-    # Right arm
-    (11, 13), (13, 15), (15, 17), (15, 19), (15, 21), (17, 19),
-    # Left arm
-    (12, 14), (14, 16), (16, 18), (16, 20), (16, 22), (18, 20),
-    # Torso
-    (11, 23), (12, 24), (23, 24),
-    # Right leg
-    (23, 25), (25, 27), (27, 29), (27, 31), (29, 31),
-    # Left leg
-    (24, 26), (26, 28), (28, 30), (28, 32), (30, 32),
-]
-
 
 def ensure_model() -> str:
     if not os.path.exists(MODEL_PATH):
@@ -59,47 +39,6 @@ def make_landmarker() -> mp_vision.PoseLandmarker:
     )
     return mp_vision.PoseLandmarker.create_from_options(options)
 
-
-def draw_skeleton(landmarks, image_size: tuple = (224, 224)) -> np.ndarray:
-    """Draw pose skeleton on a black background.
-
-    Args:
-        landmarks: list of NormalizedLandmark from MediaPipe Tasks API
-        image_size: (width, height)
-
-    Returns:
-        BGR uint8 array of shape (height, width, 3)
-    """
-    w, h = image_size
-    canvas = np.zeros((h, w, 3), dtype=np.uint8)
-
-    points = [(int(lm.x * w), int(lm.y * h)) for lm in landmarks]
-
-    for start_idx, end_idx in POSE_CONNECTIONS:
-        if (landmarks[start_idx].visibility > 0.5 and
-                landmarks[end_idx].visibility > 0.5):
-            cv2.line(canvas, points[start_idx], points[end_idx],
-                     (200, 200, 200), 2, cv2.LINE_AA)
-
-    for i, (x, y) in enumerate(points):
-        if landmarks[i].visibility > 0.5:
-            cv2.circle(canvas, (x, y), 4, (0, 255, 0), -1, cv2.LINE_AA)
-
-    return canvas
-
-
-def detect_and_draw(frame_bgr: np.ndarray, landmarker: mp_vision.PoseLandmarker,
-                    image_size: tuple = (224, 224)) -> Optional[np.ndarray]:
-    """Run pose detection on a BGR frame and return skeleton on black background.
-
-    Returns None if no person is detected.
-    """
-    rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-    result = landmarker.detect(mp_image)
-    if not result.pose_landmarks:
-        return None
-    return draw_skeleton(result.pose_landmarks[0], image_size)
 
 
 def extract_landmarks(frame_bgr: np.ndarray, landmarker: mp_vision.PoseLandmarker) -> Optional[np.ndarray]:
