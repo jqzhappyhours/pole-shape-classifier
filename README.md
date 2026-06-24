@@ -1,49 +1,76 @@
-# Pole shape classifier (video upload app)
+# Pole shape classifier
 
-This repo contains a trained image classifier (frames) for:
+A Streamlit app that classifies pole dance shapes from video using a pose landmark MLP model.
 
-- `inside_leg_hang`
-- `outside_leg_hang`
+**Supported shapes:** `airwalk`, `climb`, `inside_leg_hang`, `invert`, `outside_leg_hang`, `pencil`
 
-and a small app that lets a user upload a **video**, samples frames, and returns one predicted label.
+## How it works
 
-## 1) Put your trained model in the repo root
+1. Each video frame is sampled at a configurable interval
+2. [MediaPipe](https://developers.google.com/mediapipe) detects 33 body landmarks per frame
+3. Landmarks are normalised (centred on hip midpoint, scaled by torso length) into a 99-dim vector
+4. A small MLP classifies the vector into one of 6 pole shapes
+5. Consecutive identical predictions are merged into labelled time segments
+6. Predictions below the confidence threshold are labelled `unknown`
 
-Your notebook saves models like:
+## Setup
 
-- `efficientnetb0_v1.keras`
-- `efficientnetb0_v2.keras`
-
-Place one of those files in the repo root (same folder as `app.py`).
-
-Alternatively, set `POLE_MODEL_PATH` or type a path in the app sidebar.
-
-## 2) Install and run
-
-Use **Python 3.12** (or 3.10–3.12). Do **not** use Python 3.14 — TensorFlow has no wheels for it yet.
-
-On macOS with Homebrew:
+Use **Python 3.12** (3.10–3.12). TensorFlow has no wheels for 3.14+.
 
 ```bash
-# Remove a broken venv if you previously ran `python3 -m venv` with Python 3.14
-rm -rf .venv
-
 python3.12 -m venv .venv
 source .venv/bin/activate
-
-# Always install with the venv's python (avoids pip/python version mismatch)
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-
-streamlit run app.py
 ```
 
 If `python3.12` is not found: `brew install python@3.12`
 
-## Notes
+## Train the model
 
-- If you see `Could not find a version that satisfies tensorflow`, your venv was likely created with Python 3.14. Recreate it with `python3.12` as above.
-- After activating the venv, run `python --version` — it should show 3.12.x, not 3.14.
-- Frame preprocessing matches your training setup: resize to **224×224** and keep pixel values in **[0, 255]** (no extra normalization).
-- Video inference averages probabilities across sampled frames.
+Open `model.ipynb` and run all cells in the **Landmark-based MLP** section.
 
+Before running the notebook, extract pose coordinates from your training videos:
+
+```bash
+python extract.py --coords
+```
+
+This writes `data/coords/train.csv`, `val.csv`, and `test.csv`. The trained model is saved as `pose_mlp.keras`.
+
+To add more training data for a specific shape:
+
+```bash
+# Add videos to data/clips/<shape>/ then re-extract
+python extract.py --coords
+```
+
+## Run the app
+
+```bash
+streamlit run app.py
+```
+
+Place `pose_mlp.keras` in the repo root (same folder as `app.py`), or set `POLE_MODEL_PATH` / enter a path in the sidebar.
+
+## Sidebar controls
+
+| Setting | Default | Description |
+|---|---|---|
+| Model path | auto | Path to `pose_mlp.keras`, or leave blank to auto-load |
+| Confidence threshold | 0.6 | Frames below this confidence are labelled `unknown` |
+| Prediction interval | 30 frames | Frames skipped between predictions (~1s at 30fps) |
+
+## Project structure
+
+```
+app.py              — Streamlit app
+pole_infer.py       — Inference functions (load model, predict from video)
+pose_utils.py       — MediaPipe landmark extraction
+extract.py          — Extract frames / coords from training videos
+model.ipynb         — Model training notebook
+data/
+  clips/<shape>/    — Raw training videos per shape
+  coords/           — Extracted landmark CSVs (train/val/test)
+  images/           — Extracted image frames (for EfficientNet baseline)
+```
