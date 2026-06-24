@@ -1,6 +1,11 @@
+import csv
 import cv2
 import os
 import random
+
+from pose_utils import detect_and_draw, extract_landmarks, make_landmarker
+
+COORD_COLUMNS = [f"lm_{i}_{ax}" for i in range(33) for ax in ("x", "y", "vis")]
 
 def center_crop(frame, target_size: tuple):
     """
@@ -56,6 +61,7 @@ def extract_frames_from_video(
     frame_interval: int = 200,
     resize: tuple = None,
     skip_existing: bool = True,
+    use_pose_skeleton: bool = False,
 ):
     """
     Extract frames from a video file at a fixed interval.
@@ -98,6 +104,7 @@ def extract_frames_from_video(
 
     frame_count = 0
     saved_count = 0
+    landmarker = make_landmarker() if use_pose_skeleton else None
 
     while True:
         ret, frame = cap.read()
@@ -105,21 +112,28 @@ def extract_frames_from_video(
             break
 
         if frame_count % frame_interval == 0:
-
             if resize is not None:
                 frame = center_crop(frame, resize)
                 frame = cv2.resize(frame, resize)
 
-            frame_filename = os.path.join(
-            output_dir,
-            f"{video_name}_{shape}_frame_{saved_count:05d}.jpg"
-            )
+            if use_pose_skeleton:
+                skeleton = detect_and_draw(frame, landmarker, resize or (frame.shape[1], frame.shape[0]))
+                if skeleton is None:
+                    frame_count += 1
+                    continue  # skip frames where no person is detected
+                frame = skeleton
 
+            frame_filename = os.path.join(
+                output_dir,
+                f"{video_name}_{shape}_frame_{saved_count:05d}.jpg"
+            )
             cv2.imwrite(frame_filename, frame)
             saved_count += 1
 
         frame_count += 1
 
+    if landmarker is not None:
+        landmarker.close()
     cap.release()
 
     print(f"Finished. Saved {saved_count} frames to '{output_dir}'")
@@ -140,6 +154,7 @@ def extract_split(
     val_ratio: float = 0.15,
     seed: int = 42,
     frame_interval: int = 5,
+    use_pose_skeleton: bool = False,
 ):
     """
     Extract frames from all videos for a shape, splitting at the video level
@@ -183,18 +198,116 @@ def extract_split(
             out_dir,
             frame_interval=frame_interval,
             resize=(224, 224),
+            use_pose_skeleton=use_pose_skeleton,
         )
 
 
-'''
-Extract frames from the videos in the inside_leg_hang and outside_leg_hang folders and
-save them to the images/inside_leg_hang and images/outside_leg_hang folders. The frames
-are resized to 224x224.
-'''
+def extract_coords_split(
+    shape: str,
+    train_ratio: float = 0.7,
+    val_ratio: float = 0.15,
+    seed: int = 42,
+    frame_interval: int = 10,
+    output_dir: str = "data/coords",
+):
+    """
+    Extract normalized pose coordinates from all videos for a shape, split at
+    the video level, and append rows to per-split CSV files:
+        data/coords/train.csv
+        data/coords/val.csv
+        data/coords/test.csv
+
+    Each row: label, lm_0_x, lm_0_y, lm_0_vis, ..., lm_32_x, lm_32_y, lm_32_vis
+    Frames where no person is detected are silently skipped.
+    """
+    if train_ratio + val_ratio >= 1.0:
+        raise ValueError("train_ratio + val_ratio must be less than 1.0")
+
+    video_dir = video_folder(shape)
+    videos = sorted(
+        f for f in os.listdir(video_dir)
+        if f.lower().endswith((".mp4", ".avi", ".mov", ".mkv"))
+    )
+    if not videos:
+        raise ValueError(f"No video files found in: {video_dir}")
+
+    random.seed(seed)
+    shuffled = videos[:]
+    random.shuffle(shuffled)
+
+    n = len(shuffled)
+    n_train = max(1, int(n * train_ratio))
+    n_val = max(1, int(n * val_ratio))
+
+    os.makedirs(output_dir, exist_ok=True)
+    landmarker = make_landmarker()
+
+    try:
+        for i, video_file in enumerate(shuffled):
+            if i < n_train:
+                split_name = "train"
+            elif i < n_train + n_val:
+                split_name = "val"
+            else:
+                split_name = "test"
+
+            csv_path = os.path.join(output_dir, f"{split_name}.csv")
+            write_header = not os.path.exists(csv_path)
+
+            cap = cv2.VideoCapture(os.path.join(video_dir, video_file))
+            if not cap.isOpened():
+                print(f"Cannot open: {video_file}, skipping.")
+                continue
+
+            frame_idx = 0
+            saved = 0
+            with open(csv_path, "a", newline="") as f:
+                writer = csv.writer(f)
+                if write_header:
+                    writer.writerow(["label"] + COORD_COLUMNS)
+                while True:
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
+                    if frame_idx % frame_interval == 0:
+                        coords = extract_landmarks(frame, landmarker)
+                        if coords is not None:
+                            writer.writerow([shape] + coords.tolist())
+                            saved += 1
+                    frame_idx += 1
+            cap.release()
+            print(f"  [{split_name}] {video_file}: {saved} frames")
+    finally:
+        landmarker.close()
+
 
 if __name__ == "__main__":
+    import argparse
+    import shutil
+
+    parser = argparse.ArgumentParser(description="Extract frames or pose coordinates from videos.")
+    parser.add_argument(
+        "--coords",
+        action="store_true",
+        help="Extract pose coordinates to CSV files instead of image screenshots.",
+    )
+    args = parser.parse_args()
+
     shapes = ["inside_leg_hang", "outside_leg_hang", "airwalk", "invert", "climb", "pencil", "unknown"]
-    for shape in shapes:
-        if not os.path.isdir(video_folder(shape)):
-            raise ValueError(f"Video directory does not exist: {video_folder(shape)}")
-        extract_split(shape, train_ratio=0.7, val_ratio=0.15, frame_interval=2)
+
+    if args.coords:
+        # Clear previous coordinate data so CSVs are not appended to old runs
+        if os.path.exists("data/coords"):
+            shutil.rmtree("data/coords")
+
+        for shape in shapes:
+            if not os.path.isdir(video_folder(shape)):
+                raise ValueError(f"Video directory does not exist: {video_folder(shape)}")
+            print(f"\n=== {shape} ===")
+            extract_coords_split(shape, train_ratio=0.7, val_ratio=0.15, frame_interval=10)
+    else:
+        for shape in shapes:
+            if not os.path.isdir(video_folder(shape)):
+                raise ValueError(f"Video directory does not exist: {video_folder(shape)}")
+            print(f"\n=== {shape} ===")
+            extract_split(shape, train_ratio=0.7, val_ratio=0.15, frame_interval=5)

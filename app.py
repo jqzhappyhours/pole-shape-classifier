@@ -5,7 +5,7 @@ import tempfile
 
 import streamlit as st
 
-from pole_infer import VideoInferenceConfig, annotate_video, load_model, predict_video, predict_video_sequence
+from pole_infer import VideoInferenceConfig, annotate_video, load_model, predict_video_sequence
 
 
 st.set_page_config(page_title="Pole shape classifier", page_icon="🎥", layout="centered")
@@ -27,10 +27,7 @@ with st.sidebar:
         help="Leave blank to auto-load `efficientnetb0_v2.keras` or `efficientnetb0_v1.keras` from repo root.",
     ).strip() or None
 
-    frame_interval = st.slider("Frame interval (every Nth frame)", 1, 120, 30)
-    max_frames = st.slider("Max frames to analyze", 4, 128, 64)
-
-    config = VideoInferenceConfig(frame_interval=frame_interval, max_frames=max_frames)
+config = VideoInferenceConfig(frame_interval=10, max_frames=120, smooth_window=10)
 
 
 uploaded = st.file_uploader(
@@ -56,7 +53,6 @@ try:
         model = _get_model(model_path)
 
     with st.spinner("Running inference…"):
-        result = predict_video(model, tmp_path, config=config)
         segments = predict_video_sequence(model, tmp_path, config=config)
 
     with st.spinner("Annotating video…"):
@@ -65,13 +61,6 @@ try:
     st.subheader("Annotated video")
     with open(annotated_path, "rb") as f:
         st.video(f.read())
-
-    st.subheader("Overall prediction")
-    st.metric("Pole shape", result["pred_name"])
-    st.write(f"Confidence: **{result['confidence']:.3f}**")
-    st.caption(
-        f"Analyzed {result['n_frames']} frames • interval={result['frame_interval']} • max_frames={result['max_frames']}"
-    )
 
     st.subheader("Shape sequence")
     for seg in segments:
@@ -83,9 +72,6 @@ try:
         st.markdown(
             f"**{label}** &nbsp; `{start:.1f}s – {end:.1f}s` &nbsp; ({duration:.1f}s) &nbsp; conf: {conf:.2f}"
         )
-
-    with st.expander("Debug (mean probabilities)"):
-        st.json(result)
 finally:
     for path in (tmp_path, annotated_path):
         try:
