@@ -1,76 +1,109 @@
-# Pole shape classifier
+# Pole Shape Classifier
 
-A Streamlit app that classifies pole dance shapes from video using a pose landmark MLP model.
+A Streamlit app that analyses pole dance videos and labels each second with the performer's current shape, using MediaPipe pose landmarks and a gradient boosting classifier.
 
-**Supported shapes:** `airwalk`, `climb`, `inside_leg_hang`, `invert`, `outside_leg_hang`, `pencil`
+**Recognised shapes:** `airwalk` · `climb` · `inside_leg_hang` · `invert` · `outside_leg_hang` · `pencil`
+
+---
 
 ## How it works
 
-1. Each video frame is sampled at a configurable interval
-2. [MediaPipe](https://developers.google.com/mediapipe) detects 33 body landmarks per frame
-3. Landmarks are normalised (centred on hip midpoint, scaled by torso length) into a 99-dim vector
-4. A small MLP classifies the vector into one of 6 pole shapes
-5. Consecutive identical predictions are merged into labelled time segments
-6. Predictions below the confidence threshold are labelled `unknown`
+```
+Video frame
+  → MediaPipe: 33 body landmarks
+  → Normalise to hip midpoint + torso scale → 99-dim vector
+  → Engineered features (joint angles, left/right asymmetry) → 109-dim vector
+  → HistGradientBoosting classifier → shape label + confidence
+  → Merge consecutive frames → time-stamped segments
+```
+
+Predictions below the confidence threshold are labelled `unknown`. Short `unknown` segments (< 1.5 s) and brief `inside_leg_hang` flickers before `outside_leg_hang` (< 1.5 s) are automatically filtered out.
+
+---
 
 ## Setup
 
-Use **Python 3.12** (3.10–3.12). TensorFlow has no wheels for 3.14+.
+Requires **Python 3.10–3.12**. Python 3.13+ is not yet supported by TensorFlow.
 
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+pip install --upgrade pip
+pip install -r requirements.txt
 ```
 
 If `python3.12` is not found: `brew install python@3.12`
 
-## Train the model
+---
 
-Open `model.ipynb` and run all cells in the **Landmark-based MLP** section.
+## Training
 
-Before running the notebook, extract pose coordinates from your training videos:
+### 1. Add training videos
+
+Place `.mp4` / `.mov` files into the corresponding folder:
+
+```
+data/clips/airwalk/
+data/clips/climb/
+data/clips/inside_leg_hang/
+data/clips/invert/
+data/clips/outside_leg_hang/
+data/clips/pencil/
+```
+
+### 2. Extract pose coordinates
 
 ```bash
 python extract.py --coords
 ```
 
-This writes `data/coords/train.csv`, `val.csv`, and `test.csv`. The trained model is saved as `pose_mlp.keras`.
+Writes `data/coords/train.csv`, `val.csv`, `test.csv`. Videos are split at the clip level to prevent data leakage.
 
-To add more training data for a specific shape:
+### 3. Train
 
-```bash
-# Add videos to data/clips/<shape>/ then re-extract
-python extract.py --coords
-```
+Open `model.ipynb` and run the **Landmark-based MLP** section in order:
 
-## Run the app
+| Cell | What it does |
+|---|---|
+| Load CSVs | Loads landmark vectors, encodes labels |
+| Augmentation | Noise + mirror copies for `invert`, `inside_leg_hang`, `outside_leg_hang` |
+| Feature engineering | Adds joint angles and left/right asymmetry features |
+| Build + train MLP | Keras MLP baseline |
+| HistGradientBoosting | Sklearn gradient boosting (deployed model) |
+| Save | `joblib.dump(hgb, "pose_hgb.joblib")` |
+
+The trained model is saved as `pose_hgb.joblib` in the repo root.
+
+---
+
+## Running the app
 
 ```bash
 streamlit run app.py
 ```
 
-Place `pose_mlp.keras` in the repo root (same folder as `app.py`), or set `POLE_MODEL_PATH` / enter a path in the sidebar.
+Place `pose_hgb.joblib` in the repo root, or enter a custom path in the sidebar.
 
-## Sidebar controls
+### Sidebar options
 
 | Setting | Default | Description |
 |---|---|---|
-| Model path | auto | Path to `pose_mlp.keras`, or leave blank to auto-load |
-| Confidence threshold | 0.6 | Frames below this confidence are labelled `unknown` |
-| Prediction interval | 30 frames | Frames skipped between predictions (~1s at 30fps) |
+| Confidence threshold | 0.6 | Predictions below this are labelled `unknown` |
+| Prediction interval | 30 frames | Frames skipped between predictions (~1 s at 30 fps) |
+
+---
 
 ## Project structure
 
 ```
 app.py              — Streamlit app
-pole_infer.py       — Inference functions (load model, predict from video)
-pose_utils.py       — MediaPipe landmark extraction
-extract.py          — Extract frames / coords from training videos
-model.ipynb         — Model training notebook
+pole_infer.py       — Video inference pipeline (landmark extraction → prediction → segments)
+pose_utils.py       — MediaPipe pose landmark utilities
+extract.py          — Extract pose coordinates from training videos
+model.ipynb         — Training notebook
 data/
   clips/<shape>/    — Raw training videos per shape
-  coords/           — Extracted landmark CSVs (train/val/test)
-  images/           — Extracted image frames (for EfficientNet baseline)
+  coords/           — Extracted landmark CSVs (train / val / test)
+pose_hgb.joblib     — Trained classifier (generated by notebook)
+pose_landmarker_full.task  — MediaPipe full pose model (auto-downloaded on first run)
 ```

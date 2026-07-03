@@ -8,7 +8,7 @@ import streamlit as st
 from pole_infer import (
     VideoInferenceConfig,
     annotate_video,
-    load_mlp_model,
+    load_hgb_model,
     predict_video_sequence_coords,
 )
 
@@ -21,7 +21,7 @@ st.caption("Upload a video and the model will classify pole shapes using pose la
 
 @st.cache_resource
 def _get_model(model_path: str | None):
-    return load_mlp_model(model_path)
+    return load_hgb_model(model_path)
 
 
 with st.sidebar:
@@ -29,7 +29,7 @@ with st.sidebar:
     model_path = st.text_input(
         "Model path (optional)",
         value=os.environ.get("POLE_MODEL_PATH", ""),
-        help="Leave blank to auto-load `pose_mlp.keras` from repo root.",
+        help="Leave blank to auto-load `pose_hgb.joblib` from repo root.",
     ).strip() or None
 
     confidence_threshold = st.slider(
@@ -52,7 +52,6 @@ with st.sidebar:
 
 config = VideoInferenceConfig(
     frame_interval=frame_interval,
-    max_frames=120,
     smooth_window=5,
     confidence_threshold=confidence_threshold,
 )
@@ -87,8 +86,10 @@ try:
         annotate_video(tmp_path, segments, annotated_path)
 
     st.subheader("Annotated video")
-    with open(annotated_path, "rb") as f:
-        st.video(f.read())
+    col, _ = st.columns([3, 1])
+    with col:
+        with open(annotated_path, "rb") as f:
+            st.video(f.read(), autoplay=True)
 
     st.subheader("Shape sequence")
     for seg in segments:
@@ -98,7 +99,12 @@ try:
         conf = seg["confidence"]
         duration = end - start
         st.markdown(
-            f"**{label}** &nbsp; `{start:.1f}s – {end:.1f}s` &nbsp; ({duration:.1f}s) &nbsp; conf: {conf:.2f}"
+            f"<p style='font-size:22px; margin:4px 0'>"
+            f"<b>{label}</b> &nbsp;"
+            f"<span style='font-size:16px; color:gray'>"
+            f"{start:.1f}s – {end:.1f}s &nbsp; ({duration:.1f}s) &nbsp; conf: {conf:.2f}"
+            f"</span></p>",
+            unsafe_allow_html=True,
         )
 finally:
     for path in (tmp_path, annotated_path):

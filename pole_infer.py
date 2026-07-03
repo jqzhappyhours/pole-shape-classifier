@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 import cv2
+import joblib
 import numpy as np
 import tensorflow as tf
 
@@ -28,6 +29,68 @@ class VideoInferenceConfig:
     smooth_window: int = 5  # majority-vote window size for sequence smoothing
     use_pose_skeleton: bool = False  # must match training preprocessing
     confidence_threshold: float = 0.6  # predictions below this are labelled "unknown"
+
+
+def _postprocess_segments(segments: list[dict]) -> list[dict]:
+    """Apply business rules to clean up noisy segment transitions.
+
+    Rules applied repeatedly until stable:
+      1. "unknown" segments shorter than 1.5 s are dropped and absorbed into
+         the preceding segment (or the following one if there is no preceding).
+      2. "inside_leg_hang" segments shorter than 1.5 s whose immediate
+         successor is "outside_leg_hang" are dropped (likely a mis-detection
+         during the transition).
+
+    After each removal pass, adjacent segments with the same label are merged.
+    """
+    UNKNOWN_MIN = 1.5       # seconds
+    TRANSITION_MIN = 1.5    # seconds
+
+    segs = [s.copy() for s in segments]
+
+    changed = True
+    while changed:
+        changed = False
+        i = 0
+        while i < len(segs):
+            s = segs[i]
+            duration = s["end"] - s["start"]
+            drop = False
+
+            if s["label"] == "unknown" and duration < UNKNOWN_MIN:
+                drop = True
+            elif (s["label"] == "inside_leg_hang"
+                  and duration < TRANSITION_MIN
+                  and i + 1 < len(segs)
+                  and segs[i + 1]["label"] == "outside_leg_hang"):
+                drop = True
+
+            if drop:
+                if i > 0:
+                    segs[i - 1]["end"] = s["end"]   # absorb into previous
+                elif i + 1 < len(segs):
+                    segs[i + 1]["start"] = s["start"]  # absorb into next
+                segs.pop(i)
+                changed = True
+            else:
+                i += 1
+
+        # Merge newly adjacent segments that share a label
+        merged: list[dict] = []
+        for s in segs:
+            if merged and merged[-1]["label"] == s["label"]:
+                prev = merged[-1]
+                total = (prev["end"] - prev["start"]) + (s["end"] - s["start"])
+                w_prev = (prev["end"] - prev["start"]) / total if total else 0.5
+                prev["confidence"] = prev["confidence"] * w_prev + s["confidence"] * (1 - w_prev)
+                prev["end"] = s["end"]
+            else:
+                merged.append(s.copy())
+        if merged != segs:
+            segs = merged
+            changed = True
+
+    return segs
 
 
 def _smooth_predictions(pred_indices: np.ndarray, window: int) -> np.ndarray:
@@ -86,6 +149,32 @@ def _resolve_mlp_path(explicit_path: Optional[str] = None) -> Path:
 def load_mlp_model(model_path: Optional[str] = None) -> tf.keras.Model:
     path = _resolve_mlp_path(model_path)
     return tf.keras.models.load_model(path)
+
+
+def _resolve_hgb_path(explicit_path: Optional[str] = None) -> Path:
+    if explicit_path:
+        p = Path(explicit_path).expanduser()
+        if not p.is_file():
+            raise FileNotFoundError(f"Model file not found: {p}")
+        return p
+    p = Path("pose_hgb.joblib")
+    if p.is_file():
+        return p
+    raise FileNotFoundError(
+        "HGB model not found. Train it in model.ipynb and save as `pose_hgb.joblib`."
+    )
+
+
+def load_hgb_model(model_path: Optional[str] = None):
+    path = _resolve_hgb_path(model_path)
+    return joblib.load(path)
+
+
+def _predict_proba(model, X: np.ndarray) -> np.ndarray:
+    """Return class probabilities from either a Keras or sklearn model."""
+    if hasattr(model, "predict_proba"):
+        return model.predict_proba(X)
+    return model.predict(X, verbose=0)
 
 
 def _center_crop(frame: np.ndarray, target_size: tuple) -> np.ndarray:
@@ -293,8 +382,8 @@ def annotate_video(
         if label:
             text = f"{label}  {confidence:.2f}"
             font = cv2.FONT_HERSHEY_SIMPLEX
-            scale = max(0.6, w / 1000)
-            thickness = max(1, int(scale * 2))
+            scale = max(1.2, w / 500)
+            thickness = max(2, int(scale * 2))
             (tw, th), _ = cv2.getTextSize(text, font, scale, thickness)
             x = (w - tw) // 2
             cv2.rectangle(frame, (x - 5, 10), (x + tw + 5, 20 + th + 8), (0, 0, 0), -1)
@@ -327,28 +416,26 @@ def iter_video_coords(
     video_path: str,
     *,
     frame_interval: int,
-    max_frames: int,
-) -> Iterable[np.ndarray]:
-    """Yield normalized landmark vectors (99,) for each frame with a detected pose."""
+) -> Iterable[tuple[np.ndarray, float]]:
+    """Yield (landmark_vector, timestamp_seconds) for each sampled frame with a detected pose."""
     from pose_utils import extract_landmarks, make_landmarker  # noqa: PLC0415
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise ValueError(f"Cannot open video file: {video_path}")
 
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     landmarker = make_landmarker()
     frame_idx = 0
-    yielded = 0
     try:
-        while yielded < max_frames:
+        while True:
             ret, frame_bgr = cap.read()
             if not ret:
                 break
             if frame_idx % frame_interval == 0:
                 coords = extract_landmarks(frame_bgr, landmarker)
                 if coords is not None:
-                    yield coords
-                    yielded += 1
+                    yield coords, frame_idx / fps
             frame_idx += 1
     finally:
         landmarker.close()
@@ -368,18 +455,13 @@ def predict_video_coords(
     """
     class_names = class_names or MLP_CLASS_NAMES
 
-    coords_list = list(
-        iter_video_coords(
-            video_path,
-            frame_interval=config.frame_interval,
-            max_frames=config.max_frames,
-        )
-    )
-    if not coords_list:
+    raw = list(iter_video_coords(video_path, frame_interval=config.frame_interval))
+    if not raw:
         raise ValueError("No frames with a detected pose were extracted from the video.")
 
-    x = np.stack(coords_list, axis=0)   # (N, 99)
-    probs = model.predict(x, verbose=0)  # (N, num_classes)
+    coords_list, _ = zip(*raw)
+    x = np.stack(coords_list, axis=0)      # (N, 99)
+    probs = _predict_proba(model, x)       # (N, num_classes)
     mean_probs = probs.mean(axis=0)
 
     pred_idx = int(np.argmax(mean_probs))
@@ -420,34 +502,35 @@ def predict_video_sequence_coords(
     if not cap.isOpened():
         raise ValueError(f"Cannot open video file: {video_path}")
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    video_duration = total_frames / fps
     cap.release()
 
-    coords_list = list(
-        iter_video_coords(
-            video_path,
-            frame_interval=config.frame_interval,
-            max_frames=config.max_frames,
-        )
-    )
-    if not coords_list:
+    raw = list(iter_video_coords(video_path, frame_interval=config.frame_interval))
+    if not raw:
         raise ValueError("No frames with a detected pose were found in the video.")
 
-    x = np.stack(coords_list, axis=0)        # (N, 99)
-    probs = model.predict(x, verbose=0)       # (N, num_classes)
+    coords_list, timestamps = zip(*raw)
+    timestamps = list(timestamps)
+
+    x = np.stack(coords_list, axis=0)   # (N, 99)
+    probs = _predict_proba(model, x)    # (N, num_classes)
 
     pred_indices = np.argmax(probs, axis=1)
     pred_indices = _smooth_predictions(pred_indices, config.smooth_window)
     confidences = probs[np.arange(len(probs)), pred_indices]
-    seconds_per_sample = config.frame_interval / fps
 
+    # Each prediction covers from its timestamp to the next one's timestamp.
+    # The last prediction extends to the end of the video.
+    # Any gap before the first detection is labelled "unknown".
     segments: list[dict] = []
-    for i, (pred_idx, conf) in enumerate(zip(pred_indices, confidences)):
+
+    for i, (pred_idx, conf, t_start) in enumerate(zip(pred_indices, confidences, timestamps)):
+        t_end = timestamps[i + 1] if i + 1 < len(timestamps) else video_duration
         if float(conf) < config.confidence_threshold:
             label = "unknown"
         else:
             label = class_names[int(pred_idx)] if int(pred_idx) < len(class_names) else str(pred_idx)
-        t_start = i * seconds_per_sample
-        t_end = (i + 1) * seconds_per_sample
 
         if segments and segments[-1]["label"] == label:
             seg = segments[-1]
@@ -457,11 +540,12 @@ def predict_video_sequence_coords(
         else:
             segments.append({"start": t_start, "end": t_end, "label": label, "confidence": float(conf), "_n": 1})
 
-    min_duration = config.frame_interval / fps
-    segments = [s for s in segments if (s["end"] - s["start"]) >= min_duration * 2]
+    # Fill any gap before the first prediction with "unknown"
+    if segments and segments[0]["start"] > 0:
+        segments.insert(0, {"start": 0.0, "end": segments[0]["start"], "label": "unknown", "confidence": 0.0, "_n": 1})
 
     for seg in segments:
         seg.pop("_n")
 
-    return segments
+    return _postprocess_segments(segments)
 
