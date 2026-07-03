@@ -6,6 +6,12 @@ A Streamlit app that analyses pole dance videos and labels each second with the 
 
 ---
 
+## Demo
+
+https://github.com/user-attachments/assets/2729df23-8267-4938-9a49-0e755318c108
+
+---
+
 ## How it works
 
 ```
