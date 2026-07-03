@@ -99,6 +99,25 @@ Place `pose_hgb.joblib` in the repo root, or enter a custom path in the sidebar.
 
 ---
 
+## Model performance
+
+Evaluated on a held-out test set (818 frames, split at the video level to prevent leakage).
+Classifier: `HistGradientBoostingClassifier` trained on 99-dim normalised pose landmarks.
+
+| Shape | Precision | Recall | F1 | Support |
+|---|---|---|---|---|
+| airwalk | 0.96 | 0.91 | 0.94 | 223 |
+| climb | 0.88 | 0.92 | 0.90 | 118 |
+| inside_leg_hang | 0.89 | 0.77 | 0.83 | 190 |
+| invert | 0.66 | 0.90 | 0.76 | 89 |
+| outside_leg_hang | 0.91 | 0.84 | 0.88 | 88 |
+| pencil | 0.96 | 1.00 | 0.98 | 110 |
+| **overall** | **0.89** | **0.88** | **0.89** | **818** |
+
+`invert` has the lowest precision (0.66) due to limited training data and MediaPipe's reduced accuracy on inverted poses. All other shapes exceed F1 0.83.
+
+---
+
 ## Project structure
 
 ```
