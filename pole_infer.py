@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 
 import cv2
 import joblib
 import numpy as np
-import tensorflow as tf
 
 
 DEFAULT_CLASS_NAMES = ['airwalk',
@@ -127,7 +126,7 @@ def _resolve_model_path(explicit_path: Optional[str] = None) -> Path:
     )
 
 
-def load_model(model_path: Optional[str] = None) -> tf.keras.Model:
+def load_model(model_path: Optional[str] = None) -> Any:
     path = _resolve_model_path(model_path)
     return tf.keras.models.load_model(path)
 
@@ -146,7 +145,7 @@ def _resolve_mlp_path(explicit_path: Optional[str] = None) -> Path:
     )
 
 
-def load_mlp_model(model_path: Optional[str] = None) -> tf.keras.Model:
+def load_mlp_model(model_path: Optional[str] = None) -> Any:
     path = _resolve_mlp_path(model_path)
     return tf.keras.models.load_model(path)
 
@@ -248,7 +247,7 @@ def iter_video_frames(
 
 
 def predict_video_sequence(
-    model: tf.keras.Model,
+    model: Any,
     video_path: str,
     *,
     class_names: Optional[list[str]] = None,
@@ -307,7 +306,7 @@ def predict_video_sequence(
 
 
 def predict_video(
-    model: tf.keras.Model,
+    model: Any,
     video_path: str,
     *,
     class_names: Optional[list[str]] = None,
@@ -398,7 +397,7 @@ def annotate_video(
 
 
 def predict_class(
-    model: tf.keras.Model,
+    model: Any,
     video_path: str,
     *,
     class_names: Optional[list[str]] = None,
@@ -443,7 +442,7 @@ def iter_video_coords(
 
 
 def predict_video_coords(
-    model: tf.keras.Model,
+    model: Any,
     video_path: str,
     *,
     class_names: Optional[list[str]] = None,
@@ -484,7 +483,7 @@ def predict_video_coords(
 
 
 def predict_video_sequence_coords(
-    model: tf.keras.Model,
+    model: Any,
     video_path: str,
     *,
     class_names: Optional[list[str]] = None,
