@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -360,8 +362,9 @@ def annotate_video(
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    fourcc = cv2.VideoWriter_fourcc(*"avc1")
-    out = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
+    raw_path = tempfile.mktemp(suffix=".mp4")
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    out = cv2.VideoWriter(raw_path, fourcc, fps, (w, h))
 
     frame_idx = 0
     while True:
@@ -393,6 +396,21 @@ def annotate_video(
 
     cap.release()
     out.release()
+
+    # mp4v isn't playable in browsers; transcode to H.264 with system ffmpeg.
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", raw_path,
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                output_path,
+            ],
+            check=True,
+            capture_output=True,
+        )
+    finally:
+        Path(raw_path).unlink(missing_ok=True)
+
     return output_path
 
 
