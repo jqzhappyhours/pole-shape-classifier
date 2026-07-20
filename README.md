@@ -1,6 +1,6 @@
 # Pole Shape Classifier
 
-A Streamlit app that analyses pole dance videos and labels each second with the performer's current shape, using MediaPipe pose landmarks and a gradient boosting classifier.
+A Streamlit app that analyses pole dance videos and labels each second with the performer's current shape, using MediaPipe pose landmarks and a gradient boosting classifier. Visit the app at: https://pole-shape-classifier.streamlit.app
 
 **Recognised shapes:** `airwalk` · `climb` · `inside_leg_hang` · `invert` · `outside_leg_hang` · `pencil`
 
